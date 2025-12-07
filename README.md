@@ -26,6 +26,8 @@
 
 ### System Architecture
 
+The platform follows a **5-tier architecture** designed for scalability, maintainability, and separation of concerns:
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLIENT TIER                              │
@@ -77,477 +79,1085 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Design Patterns
+#### **Client Tier**
+The presentation layer where users interact with the application. Built with modern React, it handles all UI rendering, user input, and real-time updates. The client communicates with the backend exclusively through REST APIs and WebSocket connections, never directly accessing the database or file storage.
 
-1. **MVC Pattern**: Controllers → Services → Models
-2. **Repository Pattern**: Data access abstraction
-3. **Middleware Pattern**: Request/response processing pipeline
-4. **Observer Pattern**: Socket.IO for real-time updates
-5. **Queue Pattern**: Bull queues for async job processing
-6. **Factory Pattern**: Build configuration generation
+#### **Application Tier**
+The business logic layer that processes all requests. It's divided into three major task modules (Authentication, Projects, Deployments), each with its own controllers, services, and routes. This tier validates all incoming data, enforces business rules, manages permissions, and orchestrates operations across different services. The middleware layer acts as a security checkpoint, ensuring every request is authenticated, authorized, and valid before reaching the core business logic.
+
+#### **Data Tier**
+The persistence layer with four specialized storage systems:
+- **MongoDB**: Stores all structured data (users, projects, deployments, logs)
+- **Redis**: Manages job queues and caching for performance
+- **MinIO/S3**: Handles all file storage (source code, built assets, user uploads)
+- **Nginx**: Serves deployed applications to end-users with optimal caching and compression
+
+#### **Worker Tier**
+The background processing layer that handles computationally expensive tasks asynchronously. Workers pull jobs from Redis queues and execute them independently from the main API server. This prevents long-running build processes from blocking user requests and enables horizontal scaling by running multiple worker instances.
+
+### Design Patterns & Architectural Principles
+
+#### 1. **MVC (Model-View-Controller) Pattern**
+The backend strictly separates data models (MongoDB schemas), business logic (controllers/services), and presentation (API responses). This makes the code more maintainable because changes to one layer don't cascade to others.
+
+**Why we use it**: When you need to change how authentication works, you only modify the auth controller without touching the User model or frontend code.
+
+#### 2. **Repository Pattern**
+All database operations are abstracted through Mongoose models, which act as repositories. Instead of writing raw MongoDB queries throughout the codebase, we use model methods like `User.findOne()` or `Project.create()`.
+
+**Why we use it**: If we ever switch from MongoDB to PostgreSQL, we only need to update the model layer, not every controller that accesses data.
+
+#### 3. **Middleware Pattern (Chain of Responsibility)**
+HTTP requests pass through a series of middleware functions before reaching the controller. Each middleware performs one specific task (authentication, logging, validation) and either passes the request forward or terminates it with an error.
+
+**Why we use it**: Security checks are centralized. Every protected route automatically gets authentication and authorization checks without repetitive code.
+
+#### 4. **Observer Pattern**
+Socket.IO implements this pattern for real-time updates. The server (subject) maintains a list of connected clients (observers) and notifies them when events occur (deployment status changes, new build logs).
+
+**Why we use it**: Users see build progress in real-time without polling the server every second, reducing server load and improving user experience.
+
+#### 5. **Queue Pattern (Producer-Consumer)**
+The main API server produces jobs (deployment requests) and adds them to Redis queues. Worker processes consume these jobs and execute them asynchronously. This decouples job creation from job execution.
+
+**Why we use it**: The API server remains responsive even when 100 users trigger deployments simultaneously. Jobs are processed in order by available workers without blocking the API.
+
+#### 6. **Factory Pattern**
+Build configurations are generated dynamically based on the project's framework. The system detects whether it's a React, Vue, or static site and creates the appropriate build commands, output directories, and environment setup.
+
+**Why we use it**: Adding support for a new framework (like Svelte) only requires adding a new configuration object, not rewriting the entire build system.
 
 ---
 
 ## 🛠️ Technology Stack
 
-### Backend Technologies
+### Why These Technologies?
 
-```javascript
-{
-  // Core Framework
-  "express": "^4.18.2",          // Web framework
-  "mongoose": "^8.0.3",          // MongoDB ODM
-  
-  // Authentication & Security
-  "jsonwebtoken": "^9.0.2",      // JWT tokens
-  "bcryptjs": "^2.4.3",          // Password hashing
-  "helmet": "^7.1.0",            // Security headers
-  "express-rate-limit": "^7.1.5", // Rate limiting
-  
-  // File Storage & Processing
-  "multer": "^1.4.5-lts.1",      // File uploads
-  "minio": "^7.1.3",             // S3-compatible storage
-  "sharp": "^0.33.1",            // Image processing
-  "archiver": "^6.0.1",          // ZIP creation
-  "unzipper": "^0.11.4",         // ZIP extraction
-  
-  // Queue & Background Jobs
-  "bull": "^4.12.0",             // Redis-based queue
-  "node-cron": "^4.2.1",         // Scheduled tasks
-  
-  // Real-time & Email
-  "socket.io": "^4.8.1",         // WebSocket
-  "nodemailer": "^6.9.7",        // Email service
-  
-  // AI & External Services
-  "@google/generative-ai": "^0.1.3", // Gemini AI
-  "@octokit/rest": "^22.0.1",    // GitHub API
-  "simple-git": "^3.30.0",       // Git operations
-  
-  // Utils
-  "nanoid": "^3.3.7",            // Unique ID generation
-  "axios": "^1.6.2"              // HTTP client
-}
-```
+Our technology choices are based on industry standards, performance requirements, and developer experience. Each component serves a specific purpose in the deployment pipeline.
 
-### Frontend Technologies
+### Backend Technologies - Deep Dive
 
-```javascript
-{
-  // Core Framework
-  "react": "^19.2.0",
-  "react-dom": "^19.2.0",
-  "vite": "^7.2.4",
-  
-  // Routing & State
-  "react-router-dom": "^7.10.1",
-  "zustand": "^5.0.9",           // State management
-  "@tanstack/react-query": "^5.90.12", // Server state
-  
-  // Styling
-  "tailwindcss": "^4.1.17",
-  "@tailwindcss/vite": "^4.1.17",
-  "clsx": "^2.1.1",
-  "tailwind-merge": "^3.4.0",
-  "class-variance-authority": "^0.7.1",
-  
-  // Forms & Validation
-  "react-hook-form": "^7.68.0",
-  "@hookform/resolvers": "^5.2.2",
-  "zod": "^4.1.13",
-  
-  // UI & UX
-  "lucide-react": "^0.556.0",    // Icons
-  "framer-motion": "^12.23.25",  // Animations
-  "react-hot-toast": "^2.6.0",   // Notifications
-  "date-fns": "^4.1.0",          // Date formatting
-  
-  // Real-time
-  "socket.io-client": "^4.8.1",
-  
-  // HTTP
-  "axios": "^1.13.2"
-}
-```
+#### **Core Framework: Express.js + Node.js 20**
+Express is a minimal, fast web framework that gives us complete control over the HTTP layer. We chose Node.js 20 for several reasons:
+- **Event-driven architecture**: Perfect for I/O-heavy operations like file uploads and deployment monitoring
+- **Single language**: JavaScript across frontend and backend reduces context switching
+- **Rich ecosystem**: npm has packages for everything we need
+- **Stream support**: Efficiently handles large file uploads and log streaming
+- **Latest LTS**: Node 20 provides performance improvements and long-term support
+
+#### **Database: MongoDB with Mongoose**
+MongoDB is a NoSQL document database that stores data in flexible JSON-like documents. We chose it because:
+- **Schema flexibility**: Projects can have varying structures (React vs Node.js deployments)
+- **Horizontal scalability**: Easy to shard data across multiple servers as we grow
+- **Rich querying**: Supports complex queries, aggregations, and full-text search
+- **Mongoose ODM**: Provides schema validation, middleware hooks, and cleaner syntax
+- **Document-oriented**: Perfect for nested data like build logs within deployments
+
+**Why not PostgreSQL?**: While Postgres is excellent, our data model has varying structures (different frameworks need different configs) which suits MongoDB's flexibility better.
+
+#### **Authentication: JWT (JSON Web Tokens)**
+JWTs are stateless tokens that contain user information cryptographically signed by the server. We use them because:
+- **Stateless**: No need to store session data in the database for every request
+- **Scalable**: Multiple API servers can verify tokens without shared session storage
+- **Mobile-friendly**: Works seamlessly with mobile apps and SPAs
+- **Distributed systems**: Microservices can independently verify tokens
+- **Standard**: Industry-standard with libraries in every language
+
+**Our JWT Strategy**:
+- **Access tokens** (15 minutes): Short-lived for security, used for API requests
+- **Refresh tokens** (7 days): Long-lived, stored hashed in database, used to get new access tokens
+- **Token rotation**: New refresh token issued on each refresh to detect token theft
+
+#### **File Storage: MinIO (S3-Compatible)**
+MinIO provides object storage compatible with Amazon S3 APIs. We chose it because:
+- **Self-hosted**: We control our data without AWS costs
+- **S3-compatible**: Can easily migrate to AWS S3 if needed
+- **Performance**: Optimized for high-throughput file operations
+- **Scalability**: Supports clustering and distributed storage
+- **Cost-effective**: No per-GB storage fees for self-hosting
+
+**Storage Strategy**:
+- Source code stored in MinIO for durability
+- Built assets packaged as ZIP files
+- User avatars and project thumbnails cached with CDN headers
+- Separate buckets for projects, avatars, and templates
+
+#### **Queue System: Bull + Redis**
+Bull is a Redis-based queue for Node.js that handles background jobs. We use queues because:
+- **Async processing**: Builds can take 5-10 minutes; queues prevent API timeout
+- **Retry logic**: Failed builds automatically retry with exponential backoff
+- **Priority queues**: Paid users' deployments can jump the queue
+- **Monitoring**: Bull provides a dashboard to track job progress
+- **Horizontal scaling**: Multiple workers can process jobs simultaneously
+
+**Job Flow**:
+1. User triggers deployment → API creates job → Job added to Redis queue
+2. Worker picks up job → Processes build → Updates database → Emits Socket.IO events
+3. If fails: Job retries up to 3 times with increasing delays
+
+#### **Real-time: Socket.IO**
+Socket.IO enables bidirectional, event-based communication between client and server. We use it for:
+- **Build logs**: Stream logs to frontend as they're generated
+- **Deployment status**: Instant status updates (queued → building → deploying → success)
+- **Notifications**: Real-time alerts for completed deployments
+- **Collaborative features**: Multiple team members see updates simultaneously
+
+**Why not Server-Sent Events (SSE)?**: Socket.IO provides bidirectional communication, automatic reconnection, and fallback to HTTP long-polling if WebSockets fail.
+
+#### **Security: Helmet + bcrypt + Rate Limiting**
+- **Helmet**: Adds 15+ HTTP security headers (XSS protection, CSP, HSTS)
+- **bcrypt**: Industry-standard password hashing with configurable work factor (we use 12 rounds)
+- **express-rate-limit**: Prevents brute-force attacks by limiting login attempts
+- **Input validation**: Mongoose schemas + Zod prevent injection attacks
+
+### Frontend Technologies - Deep Dive
+
+#### **Framework: React 19 with Vite 7**
+React is the most popular UI library for building interactive interfaces. We use the latest version because:
+- **Component-based**: Reusable UI components reduce code duplication
+- **Virtual DOM**: Efficient updates only re-render changed elements
+- **Ecosystem**: Massive library of third-party components
+- **Server Components**: React 19 enables faster initial page loads
+- **Vite**: Lightning-fast dev server with instant HMR (Hot Module Replacement)
+
+**Why not Next.js?**: Next.js is great for SEO-heavy sites, but our dashboard is authenticated and doesn't need server-side rendering. Vite gives us faster development without the overhead.
+
+#### **State Management: Zustand + TanStack Query**
+We use a hybrid approach:
+- **Zustand**: Global state (user authentication, theme) - lightweight alternative to Redux
+- **TanStack Query**: Server state (projects, deployments) - handles caching, refetching, optimistic updates
+- **Component state**: Local UI state (form inputs, modals) - stays in component
+
+**Why not just Redux?**: Redux has too much boilerplate for simple apps. Zustand gives us global state with 10x less code.
+
+**Why TanStack Query?**: It automatically handles the complexity of server state:
+- Caches API responses to reduce network requests
+- Refetches stale data in the background
+- Provides loading/error states out of the box
+- Optimistic updates for better UX
+- Automatic retries on failure
+
+#### **Styling: Tailwind CSS 4**
+Tailwind is a utility-first CSS framework that provides low-level classes. We chose it because:
+- **Rapid development**: Build UIs without writing custom CSS
+- **Consistency**: Design system built into class names
+- **Performance**: Purges unused CSS in production (tiny bundles)
+- **Responsive**: Mobile-first with intuitive breakpoint syntax
+- **Customizable**: Easy to extend with custom colors, spacing, etc.
+
+**Component Libraries**: We use shadcn/ui patterns (unstyled components + Tailwind) for flexibility without the bloat of full UI libraries like Material-UI.
+
+#### **Forms: React Hook Form + Zod**
+React Hook Form manages form state with minimal re-renders. Zod provides TypeScript-first schema validation. Together they:
+- **Performance**: Only re-render changed fields
+- **Validation**: Schema-based validation with great error messages
+- **Type safety**: Zod schemas generate TypeScript types
+- **Developer experience**: Less boilerplate than Formik
+- **Bundle size**: Lightweight (45KB vs 150KB for Formik)
+
+### Infrastructure & DevOps
+
+#### **Nginx**
+Nginx acts as a reverse proxy and web server for deployed applications. We use it because:
+- **Performance**: Handles 10,000+ concurrent connections efficiently
+- **Static file serving**: Optimized for serving built React apps
+- **Gzip compression**: Reduces bandwidth usage by 70-80%
+- **Caching**: Browser caching for static assets (CSS, JS, images)
+- **SPA support**: try_files directive handles client-side routing
+- **SSL termination**: Can add Let's Encrypt certificates easily
+
+**Dynamic configuration**: Each deployment gets its own Nginx server block auto-generated with proper caching rules, compression, and security headers.
+
+#### **Docker (Planned)**
+Currently builds run directly on the host machine. Docker will:
+- **Isolation**: Each build runs in a sandboxed container
+- **Consistency**: Same environment locally, staging, production
+- **Security**: Malicious code can't access host system
+- **Dependency management**: Each framework gets its own container with required tools
+- **Resource limits**: Prevent one build from consuming all CPU/RAM
+
+#### **Bull Dashboard**
+Visual monitoring for background jobs showing:
+- Active builds in progress
+- Completed builds with timing metrics
+- Failed builds with error details
+- Queue depth and processing rate
+- Worker utilization across instances
 
 ---
 
 ## 🗄️ Database Schema & Models
 
-### 1. User Model (`task1_auth/models/User.js`)
+### MongoDB Schema Design Philosophy
 
-**Purpose**: Core user authentication and profile management
+MongoDB allows flexible, JSON-like documents that can evolve over time. Unlike traditional relational databases with rigid table structures, MongoDB documents can have optional fields and nested objects. This is perfect for deployment platforms where different project types have different requirements.
 
-```javascript
-{
-  username: String (unique, 3-30 chars),
-  email: String (unique, validated),
-  password: String (hashed with bcrypt, salt rounds: 12),
-  avatar: String (URL to avatar image),
-  bio: String (max 500 chars),
-  role: Enum ['user', 'admin'],
-  
-  // Email Verification
-  isEmailVerified: Boolean,
-  emailVerificationToken: String,
-  emailVerificationExpires: Date,
-  
-  // Password Reset
-  passwordResetToken: String,
-  passwordResetExpires: Date,
-  
-  // Two-Factor Auth (Future)
-  twoFactorEnabled: Boolean,
-  twoFactorSecret: String,
-  
-  // Security
-  apiKey: String,
-  lastLogin: Date,
-  loginAttempts: Number,
-  lockUntil: Date,
-  isActive: Boolean,
-  
-  timestamps: true (createdAt, updatedAt)
-}
-```
+### 1. User Model - The Foundation of Authentication
 
-**Key Methods**:
-- `comparePassword(candidatePassword)`: Verify password using bcrypt
-- `isLocked()`: Check if account is locked due to failed attempts
-- `incLoginAttempts()`: Increment login attempts counter
+**Purpose**: Manages user accounts, authentication credentials, and security features.
 
-**Security Features**:
-- Password hashing with bcrypt (12 rounds)
-- Account locking after 5 failed attempts (1 hour)
-- Email verification required
-- Token-based password reset
+#### **Core Identity Fields**
+- `username`: Unique identifier for login and display. Must be 3-30 characters to prevent abuse (too short = collision, too long = spam).
+- `email`: Primary contact and login method. Validated with regex to ensure format correctness. Stored lowercase to prevent duplicate accounts (user@email.com vs USER@EMAIL.COM).
+- `password`: Never stored in plaintext. Hashed with bcrypt using 12 salt rounds, which takes ~200ms to hash (slow enough to prevent brute-force, fast enough for good UX).
 
----
+#### **Email Verification System**
+Why do we require email verification?
+1. **Prevent spam accounts**: Bots can't verify real emails
+2. **Password recovery**: We need a verified email to reset passwords
+3. **Communication**: Ensure we can reach users for important notifications
+4. **Trust**: Users with verified emails are more likely to be legitimate
 
-### 2. Project Model (`task2-projects/models/Project.js`)
+**How it works**:
+- On signup, we generate a cryptographically random token (impossible to guess)
+- Token is valid for 24 hours to prevent stale links
+- Email contains link: `https://app.com/verify-email/{token}`
+- User clicks → Server validates token → Sets `isEmailVerified: true`
+- Until verified, users can't access full features (can't deploy, limited uploads)
 
-**Purpose**: Represents a deployable project/application
+#### **Password Reset Flow**
+Similar to email verification but with stricter security:
+- Token valid for only 1 hour (shorter window to prevent abuse)
+- One-time use: Token deleted after successful reset
+- All active sessions invalidated: Forces re-login on all devices
+- Password requirements enforced: Minimum 8 characters, complexity rules
 
-```javascript
-{
-  name: String (3-100 chars),
-  description: String (max 1000 chars),
-  
-  // Subdomain & Deployment
-  subdomain: String (unique, format: xxx.local),
-  deploymentUrl: String,
-  customDomain: String (optional),
-  
-  // Ownership
-  userId: ObjectId (ref: User, indexed),
-  teamId: ObjectId (ref: Team, optional, indexed),
-  
-  // Configuration
-  framework: Enum [
-    'react', 'vue', 'angular', 'next', 'nuxt', 
-    'svelte', 'static', 'node', 'express', 'other'
-  ],
-  visibility: Enum ['public', 'private'],
-  status: Enum ['active', 'archived', 'draft'],
-  
-  // Metadata
-  tags: [String],
-  isFavorite: Boolean,
-  repositoryUrl: String (GitHub URL),
-  thumbnail: String,
-  
-  // Stats
-  totalFiles: Number,
-  totalSize: Number (bytes),
-  lastDeployedAt: Date,
-  viewCount: Number,
-  
-  // Cloning
-  clonedFrom: ObjectId (ref: Project),
-  
-  timestamps: true
-}
-```
+#### **Account Security Features**
 
-**Subdomain Validation**:
-- Must be lowercase
-- Pattern: `[a-z0-9]([a-z0-9-]*[a-z0-9])?.local`
-- Example: `my-app.local`, `project123.local`
+**Login Attempt Tracking**:
+Prevents brute-force attacks by tracking failed logins:
+- After 5 failed attempts: Account locked for 1 hour
+- `lockUntil` field stores unlock timestamp
+- Automatic unlock after timeout (no admin intervention needed)
+- Successful login resets attempt counter
 
-**Indexes**:
-- `userId` (for fast user project lookup)
-- `teamId` (for team projects)
-- `subdomain` (unique constraint)
+**Why 5 attempts?**: Balance between security and user experience. Users legitimately forget passwords but 5 attempts is enough for brute-force prevention.
+
+**Session Management**:
+- `lastLogin`: Track user activity patterns
+- `apiKey`: For programmatic access (CLI tools, webhooks)
+- `isActive`: Soft delete without losing historical data
+
+#### **Security Methods Explained**
+
+**comparePassword()**: 
+Instead of storing passwords, we store bcrypt hashes. When a user logs in:
+1. User submits plaintext password
+2. We hash it with bcrypt
+3. Compare hash with stored hash
+4. Match = login success, No match = wrong password
+
+This is one-way: You can't reverse a hash to get the original password.
+
+**isLocked()**:
+Checks if current time < lockUntil time. Simple but effective at preventing automated attacks during lockout period.
+
+**incLoginAttempts()**:
+Increments failed login counter. After 5 attempts, sets `lockUntil` to 1 hour from now. Uses atomic MongoDB operations to prevent race conditions (two failed logins at the same time).
 
 ---
 
-### 3. Deployment Model (`task3-deployment/models/Deployment.js`)
+### 2. Project Model - Deployable Applications
 
-**Purpose**: Tracks deployment history and build status
+**Purpose**: Represents a user's project (website, app, API) that can be deployed to a live URL.
 
-```javascript
-{
-  projectId: ObjectId (ref: Project, indexed),
-  userId: ObjectId (ref: User),
-  version: String,
-  
-  // Status & Lifecycle
-  status: Enum [
-    'queued', 'building', 'deploying', 
-    'success', 'failed', 'cancelled'
-  ],
-  
-  // Build Logs
-  buildLogs: [{
-    message: String,
-    type: Enum ['info', 'warning', 'error', 'success', 'command'],
-    timestamp: Date
-  }],
-  
-  // Build Configuration
-  framework: String,
-  buildCommand: String,
-  installCommand: String,
-  outputDir: String,
-  nodeVersion: String (default: '20.x'),
-  
-  // URLs & Storage
-  deploymentUrl: String,
-  subdomain: String,
-  filesPath: String (local path),
-  minioKey: String (S3 path),
-  
-  // Performance Metrics
-  buildDuration: Number (seconds),
-  buildSize: Number (bytes),
-  startedAt: Date,
-  completedAt: Date,
-  
-  // Error Tracking
-  error: {
-    message: String,
-    stack: String,
-    code: String
-  },
-  
-  // Retry & Rollback
-  attempts: Number,
-  rollbackFrom: ObjectId (ref: Deployment),
-  
-  // Status
-  isActive: Boolean,
-  healthCheckStatus: Enum ['pending', 'healthy', 'unhealthy'],
-  
-  timestamps: true
-}
-```
+#### **Subdomain System**
+Every project gets a unique subdomain for accessing the deployed application.
 
-**Methods**:
-- `addLog(message, type)`: Append log entry
-- `virtual duration`: Calculate build duration
+**Format**: `project-name.local` (e.g., `my-portfolio.local`, `react-app.local`)
 
-**Indexes**:
-- `{ projectId: 1, createdAt: -1 }` (project deployment history)
-- `{ userId: 1, status: 1 }` (user deployments by status)
-- `{ status: 1, createdAt: -1 }` (global status queries)
+**Why .local?**: 
+- Development TLD that doesn't conflict with real domains
+- Can be accessed on local network
+- Easy to configure in Windows hosts file
+- Production would use real domains like `.vercel.app`
 
----
+**Subdomain Validation Rules**:
+- Lowercase only (prevents DNS case-sensitivity issues)
+- Alphanumeric + hyphens (DNS-safe characters)
+- Must start/end with alphanumeric (no hanging hyphens)
+- Unique across all projects (enforced by MongoDB unique index)
 
-### 4. Session Model (`task1_auth/models/Session.js`)
+**Example Flow**:
+- User creates "My React App"
+- System generates: `my-react-app.local`
+- Nginx serves files from `/deployments/my-react-app.local/`
+- Users access at `http://my-react-app.local`
 
-**Purpose**: JWT refresh token management
+#### **Framework Detection**
+The `framework` field determines how the project is built and deployed:
 
-```javascript
-{
-  userId: ObjectId (ref: User, indexed),
-  refreshToken: String (hashed, unique),
-  deviceInfo: {
-    userAgent: String,
-    ip: String,
-    device: String,
-    browser: String
-  },
-  isActive: Boolean,
-  expiresAt: Date,
-  lastUsedAt: Date,
-  
-  timestamps: true
-}
-```
+- **react/vue/angular**: Frontend frameworks needing npm build
+- **next/nuxt**: Full-stack frameworks with server-side rendering
+- **static**: Plain HTML/CSS/JS (no build needed)
+- **node/express**: Backend APIs (different deployment strategy)
+- **other**: Custom build process
+
+**Why track framework?**: Each framework has different:
+- Build commands (`npm run build` vs `next build`)
+- Output directories (`build/` vs `dist/` vs `.next/`)
+- Environment setup (Node version, package manager)
+- Deployment strategy (static files vs Node server)
+
+#### **Ownership & Permissions**
+- `userId`: Who created the project (always has full access)
+- `teamId`: If project belongs to a team, all team members get access
+- Combined with TeamMember roles to enforce permissions
+
+**Permission Flow**:
+1. User makes API request to edit project
+2. Middleware checks: Is user the owner OR a team member with edit rights?
+3. If no: Return 403 Forbidden
+4. If yes: Proceed with operation
+
+#### **Project Statistics**
+- `totalFiles`: Count of uploaded files (updated on each upload/delete)
+- `totalSize`: Bytes used by project (enforces storage quota)
+- `viewCount`: How many times deployed URL was accessed
+- `lastDeployedAt`: When last successful deployment completed
+
+**Why track these?**: 
+- Show users their storage usage
+- Identify popular projects for analytics
+- Detect inactive projects for cleanup
+
+#### **Status Lifecycle**
+- `active`: Normal state, can deploy
+- `archived`: Hidden from main list, can't deploy (preserve history)
+- `draft`: Not yet deployed, still configuring
+
+**Favorites System**:
+`isFavorite` flag lets users bookmark important projects for quick access. UI shows starred projects at top of list.
+
+#### **Database Indexes for Performance**
+
+MongoDB indexes speed up queries by creating sorted data structures:
+
+- **userId index**: Fast lookup of "all projects by this user" (most common query)
+- **teamId index**: Fast lookup of "all team projects" for collaboration features
+- **subdomain unique index**: Enforces uniqueness AND enables fast DNS lookups
+
+Without indexes, MongoDB would scan every document. With 100,000 projects, a query could take seconds. Indexes reduce this to milliseconds.
 
 ---
 
-### 5. Additional Models
+### 3. Deployment Model - Build History & Tracking
 
-**Team Model**: Multi-user collaboration
-**TeamMember Model**: User roles in teams
-**ProjectFile Model**: File metadata and S3 references
-**ProjectSettings Model**: Build configuration per project
-**Template Model**: One-click deploy templates
-**ActivityLog Model**: Audit trail
-**Notification Model**: In-app notifications
-**Environment Model**: Environment variables
-**HealthCheck Model**: Deployment health monitoring
-**BuildQueue Model**: Queue management
+**Purpose**: Records every deployment attempt, whether successful or failed, with complete logs and metrics.
+
+#### **Deployment Lifecycle States**
+
+```
+queued → building → deploying → success
+                              ↓
+                            failed
+```
+
+- **queued**: Job created, waiting for worker
+- **building**: Worker is running npm install/build
+- **deploying**: Copying built files to Nginx directory
+- **success**: Live and accessible at deployment URL
+- **failed**: Error occurred, logs contain details
+- **cancelled**: User manually stopped deployment
+
+**Why track state?**: Users see real-time progress. Backend knows which stage failed for debugging.
+
+#### **Build Logs System**
+
+Each log entry has:
+- `message`: What happened ("Installing dependencies...", "Build complete!")
+- `type`: Severity level (info/warning/error/success/command)
+- `timestamp`: Exact time for troubleshooting
+
+**Log Types Explained**:
+- `info`: Normal progress updates
+- `warning`: Non-critical issues (deprecated packages)
+- `error`: Build failures (syntax errors, missing dependencies)
+- `success`: Major milestones (build complete, deployment live)
+- `command`: Shell commands executed (`npm install`, `npm run build`)
+
+**Real-time Log Streaming**:
+As build progresses, worker adds logs to database AND emits Socket.IO events. Frontend receives logs instantly and displays them in a terminal-style interface.
+
+#### **Build Configuration**
+These fields control HOW the project is built:
+
+- `buildCommand`: What to run to build the project (`npm run build`)
+- `installCommand`: How to install dependencies (`npm install`)
+- `outputDir`: Where built files are located (`build/` or `dist/`)
+- `nodeVersion`: Which Node.js version to use (`20.x`)
+
+**Framework Defaults**: When creating a deployment, system auto-fills these based on project framework. User can override for custom setups.
+
+#### **Performance Metrics**
+- `buildDuration`: Seconds from start to finish (helps identify slow builds)
+- `buildSize`: Bytes of final built assets (compressed)
+- `startedAt`: When build worker picked up job
+- `completedAt`: When final status set (success/failed)
+
+**Why measure these?**: 
+- Identify performance bottlenecks
+- Charge enterprise users based on build minutes
+- Detect infinite loop builds (timeout after 10 minutes)
+- Compare build times across deployments to track regressions
+
+#### **Error Tracking**
+When builds fail, we capture:
+- `error.message`: Human-readable description
+- `error.stack`: Full stack trace for debugging
+- `error.code`: Error category (DEPENDENCY_FAILED, BUILD_TIMEOUT, etc.)
+
+**Categorizing Errors**: Makes it easier to provide helpful error messages. Instead of showing raw error, we detect common issues:
+- "Missing package.json" → Suggest creating one
+- "Command not found: npm" → Node.js not installed
+- "Port already in use" → Another build is running
+
+#### **Rollback System**
+- `rollbackFrom`: Reference to previous deployment being reverted
+- `isActive`: Only one deployment per project is active at a time
+
+**Rollback Flow**:
+1. User clicks "Rollback to v3"
+2. System creates new deployment copying v3's configuration
+3. Re-runs build with v3's code
+4. On success: Deactivates current deployment, activates new one
+5. Nginx automatically serves new version
+
+**Why not just switch pointers?**: Re-building ensures environment consistency. Old builds might not work with newer Node versions or dependencies.
 
 ---
 
 ## 🔐 Authentication System
 
-### JWT Token Flow
+### Understanding JWT (JSON Web Tokens)
+
+JWT is a standard for creating tokens that assert claims. Think of it like a digital passport that proves who you are without needing to check with a central authority every time.
+
+**Why JWT instead of traditional sessions?**
+
+**Traditional Session-based Auth (Old Way)**:
+1. User logs in → Server creates session ID → Stores in database → Returns cookie with session ID
+2. Every request → Server checks database for session ID → Validates → Proceeds
+3. Logout → Delete session from database
+
+**Problems**:
+- Database hit on EVERY request (slow)
+- Doesn't scale horizontally (sessions tied to one server)
+- Complex with load balancers (need sticky sessions)
+
+**JWT-based Auth (Our Approach)**:
+1. User logs in → Server creates JWT with user info → Signs it with secret key → Returns token
+2. Every request → Server verifies signature (no database) → Trusts claims in token → Proceeds
+3. Logout → Client deletes token (server doesn't track it)
+
+**Benefits**:
+- **Stateless**: Server doesn't store anything, verifies signature mathematically
+- **Scalable**: Any API server can verify tokens without shared session storage
+- **Distributed**: Microservices can independently verify tokens with the same secret key
+- **Mobile-friendly**: Works seamlessly with mobile apps (no cookies needed)
+- **Cross-origin**: Easier to handle than session cookies with CORS
+
+#### Two-Token Strategy
+
+We use **two types of tokens** to balance security and user experience:
+
+**Access Token (15 minutes)**:
+- Short-lived for security
+- Used for every API request
+- If stolen, attacker only has 15 minutes of access
+- Sent in Authorization header: `Bearer {token}`
+
+**Refresh Token (7 days)**:
+- Long-lived for convenience
+- Used only to get new access tokens
+- Stored hashed in database for revocation
+- Rotates on each use to detect theft
+
+**Why two tokens?**: If we only used long-lived access tokens, stolen tokens would be valid for days. If we only used short-lived tokens, users would have to re-login every 15 minutes. Two tokens give us both security and convenience.
+
+**Token Rotation Explained**:
+When a refresh token is used, we immediately issue a new refresh token and invalidate the old one. If someone steals your refresh token and uses it, you'll get logged out when you try to refresh, alerting you to the breach.
+
+#### Authentication Middleware Flow
+
+Every protected route passes through middleware that verifies the user's identity:
+
+**Step 1: Extract Token**
+```
+Request comes in with header:
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+Middleware extracts the token after "Bearer "
+```
+
+**Step 2: Verify Signature**
+```
+JWT consists of three parts: header.payload.signature
+
+Server uses JWT_SECRET to verify the signature:
+- If signature matches: Token hasn't been tampered with
+- If signature fails: Return 401 Unauthorized
+```
+
+**Step 3: Check Expiration**
+```
+Payload contains exp (expiration timestamp):
+- If current time < exp: Token is valid
+- If current time > exp: Return 401 (token expired)
+```
+
+**Step 4: Attach User Object**
+```
+Token payload contains user info:
+{ sub: userId, email: "user@example.com", role: "user" }
+
+Middleware queries database for full user object
+Attaches to req.user for controllers to use
+```
+
+**Step 5: Proceed or Block**
+```
+If all checks pass:
+  next() → Request proceeds to controller
+
+If any check fails:
+  return res.status(401).json({ error: 'Unauthorized' })
+```
+
+#### Registration Flow with Email Verification
+
+**Why require email verification?**
+- **Spam prevention**: Bots can't verify real email addresses
+- **Password recovery**: We need a verified email to send reset links
+- **Communication channel**: Ensures we can reach users for important updates
+- **Trust signal**: Verified users are more likely to be legitimate
+
+**The Complete Flow**:
+
+**1. User Submits Signup Form**
+```
+Frontend sends:
+{
+  username: "johndoe",
+  email: "john@example.com",
+  password: "SecurePass123!"
+}
+```
+
+**2. Server Validates Input**
+```
+- Username: 3-30 characters, alphanumeric + underscores
+- Email: Valid email format, not already registered
+- Password: Minimum 8 characters, at least one uppercase, one lowercase, one number
+```
+
+**3. Check for Existing Users**
+```
+const existingUser = await User.findOne({
+  $or: [{ email }, { username }]
+});
+
+If exists: Return 409 Conflict "Email/username already taken"
+```
+
+**4. Hash Password**
+```
+bcrypt hashes password with 12 salt rounds (~200ms per hash)
+
+This is intentionally slow to prevent brute-force attacks
+Attacker would need 200ms × 10,000 attempts = 33 minutes for 10K passwords
+```
+
+**5. Generate Verification Token**
+```
+const token = crypto.randomBytes(32).toString('hex');
+
+Cryptographically secure random token (impossible to guess)
+Valid for 24 hours (enough time to check email, not too long to be insecure)
+```
+
+**6. Send Verification Email**
+```
+Email contains link: https://app.com/verify-email/{token}
+
+Email service (Nodemailer) sends via SMTP
+Template includes branding, instructions, and expiry warning
+```
+
+**7. Save User to Database**
+```
+User saved with:
+- isEmailVerified: false
+- emailVerificationToken: hashed token
+- emailVerificationExpires: 24 hours from now
+
+User can't access full features until verified
+```
+
+**8. User Clicks Verification Link**
+```
+Browser navigates to /verify-email/{token}
+Server validates token hasn't expired
+Sets isEmailVerified: true
+Clears verification token
+Redirects to login with success message
+```
+
+#### Password Reset Flow - Maximum Security
+
+Password reset is a security-critical operation because it bypasses authentication. We implement multiple safeguards:
+
+**Request Reset (User Forgot Password)**:
+
+**1. User Enters Email**
+```
+POST /api/auth/forgot-password
+{ email: "john@example.com" }
+```
+
+**2. Server Finds User**
+```
+const user = await User.findOne({ email });
+
+If user doesn't exist: Still return success (prevent email enumeration attacks)
+"If account exists, reset email sent"
+```
+
+**3. Generate Reset Token**
+```
+const resetToken = crypto.randomBytes(32).toString('hex');
+
+Token valid for only 1 hour (shorter than email verification)
+Why? Password reset is more sensitive - stolen token gives account access
+```
+
+**4. Send Reset Email**
+```
+Email contains:
+- Reset link: https://app.com/reset-password/{token}
+- Expiry time: "This link expires in 1 hour"
+- Security warning: "If you didn't request this, ignore this email"
+```
+
+**5. Store Hashed Token**
+```
+user.passwordResetToken = hash(resetToken);
+user.passwordResetExpires = Date.now() + 3600000; // 1 hour
+
+We hash the token before storing so database breach doesn't expose reset tokens
+```
+
+**Reset Password (User Submits New Password)**:
+
+**1. User Clicks Link & Submits Form**
+```
+GET /reset-password/{token} → Shows form
+POST /api/auth/reset-password/{token}
+{ newPassword: "NewSecurePass456!" }
+```
+
+**2. Validate Token**
+```
+const user = await User.findOne({
+  passwordResetToken: hash(token),
+  passwordResetExpires: { $gt: Date.now() } // Not expired
+});
+
+If invalid/expired: Return 400 "Invalid or expired reset token"
+```
+
+**3. Enforce Password Requirements**
+```
+- Different from old password (prevent reuse)
+- Meets complexity requirements (8+ chars, mixed case, numbers)
+- Not in common password list (password123, qwerty, etc.)
+```
+
+**4. Hash New Password**
+```
+user.password = await bcrypt.hash(newPassword, 12);
+
+bcrypt automatically generates new salt (old password can't be reversed)
+```
+
+**5. Clear Reset Token**
+```
+user.passwordResetToken = undefined;
+user.passwordResetExpires = undefined;
+
+One-time use: Token immediately invalidated
+Even if attacker intercepts token, it's useless after first use
+```
+
+**6. Invalidate All Sessions**
+```
+await Session.deleteMany({ userId: user._id });
+
+Force re-login on all devices (desktop, mobile, tablets)
+Why? If account was compromised, attacker's sessions are also terminated
+```
+
+**7. Send Confirmation Email**
+```
+"Your password was successfully reset"
+"If this wasn't you, contact support immediately"
+
+Alerts legitimate user if someone else reset their password
+```
+
+#### Account Locking & Brute-Force Prevention
+
+**The Attack Vector**:
+Without protection, attackers can try thousands of password combinations per second against your login endpoint.
+
+**Our Defense - Progressive Lockout**:
+
+**Failed Login Counter**:
+```
+User fails login → loginAttempts++
+
+After 5 failed attempts:
+  lockUntil = Date.now() + 3600000 // Lock for 1 hour
+  
+Successful login:
+  loginAttempts = 0
+  lockUntil = undefined
+```
+
+**Why 5 Attempts?**:
+- 3 attempts: Too strict, users legitimately forget passwords
+- 10 attempts: Too lenient, gives attackers more chances
+- 5 attempts: Good balance - enough for typos, stops automated attacks
+
+**Why 1 Hour?**:
+- Long enough to deter brute-force (1 hour per 5 attempts = ~17 years for 1M passwords)
+- Short enough that legitimate users aren't permanently locked out
+- Automatically unlocks without admin intervention
+
+**Checking Lock Status**:
+```
+Before checking password, verify lock:
+
+if (user.isLocked()) {
+  const minutesLeft = Math.ceil((user.lockUntil - Date.now()) / 60000);
+  return res.status(423).json({
+    error: `Account locked. Try again in ${minutesLeft} minutes`
+  });
+}
+```
+
+**Atomic Operations Prevent Race Conditions**:
+```
+Multiple failed logins at exact same time could corrupt counter
+
+MongoDB atomic operation:
+await User.updateOne(
+  { _id: userId },
+  { $inc: { loginAttempts: 1 } } // Atomic increment
+);
+
+Guarantees correct count even with simultaneous requests
+```
+
+#### Complete Login Flow Diagram
 
 ```
 ┌─────────────┐
-│   CLIENT    │
+│   CLIENT    │  User enters email + password
 └──────┬──────┘
        │ 1. POST /api/auth/login
        │    { email, password }
        ↓
-┌─────────────────┐
-│    SERVER       │
-│  ┌───────────┐  │
-│  │Controller │  │
-│  └─────┬─────┘  │
-│        ↓        │
-│  ┌───────────┐  │
-│  │Verify     │  │
-│  │Password   │  │
-│  └─────┬─────┘  │
-│        ↓        │
-│  ┌───────────┐  │
-│  │Generate   │  │
-│  │Tokens     │  │
-│  └─────┬─────┘  │
-└────────┼────────┘
-         │ 2. Response
-         │    { accessToken, refreshToken, user }
-         ↓
+┌─────────────────────────────────────────┐
+│    SERVER - Auth Controller             │
+│  ┌───────────────────────────────────┐  │
+│  │ 1. Find user by email             │  │
+│  │    if (!user) return 401          │  │
+│  └───────────────┬───────────────────┘  │
+│                  ↓                       │
+│  ┌───────────────────────────────────┐  │
+│  │ 2. Check if account locked        │  │
+│  │    if (locked) return 423         │  │
+│  └───────────────┬───────────────────┘  │
+│                  ↓                       │
+│  ┌───────────────────────────────────┐  │
+│  │ 3. Compare password with bcrypt   │  │
+│  │    const match = await            │  │
+│  │    user.comparePassword(password) │  │
+│  └───────────────┬───────────────────┘  │
+│                  ↓                       │
+│         ┌────────┴────────┐             │
+│         │                 │             │
+│    No Match          Yes Match          │
+│         │                 │             │
+│    ┌────▼─────┐      ┌───▼──────────┐  │
+│    │ Increment│      │Reset attempts│  │
+│    │ attempts │      │Generate JWT  │  │
+│    │ Lock if 5│      │Create session│  │
+│    │Return 401│      │Update lastLog│  │
+│    └──────────┘      └───┬──────────┘  │
+└────────────────────────────┼────────────┘
+                             │ 2. Response
+                             │    {
+                             │      accessToken: "eyJ...",
+                             │      refreshToken: "abc...",
+                             │      user: { id, email, username }
+                             │    }
+                             ↓
+┌──────────────────────────────────────────┐
+│   CLIENT - Store Tokens                  │
+│  localStorage.setItem('accessToken', ...) │
+│  localStorage.setItem('refreshToken', ...)│
+│  useAuthStore.setAuth(user, tokens)      │
+└──────┬───────────────────────────────────┘
+       │ 3. Navigate to /dashboard
+       │
+       │ 4. Subsequent API requests
+       │    Authorization: Bearer {accessToken}
+       ↓
+┌──────────────────────────────────────────┐
+│    SERVER - Middleware Chain             │
+│  ┌────────────────────────────────────┐  │
+│  │ authenticateUser()                 │  │
+│  │ 1. Extract token from header       │  │
+│  │ 2. Verify JWT signature            │  │
+│  │ 3. Check expiration                │  │
+│  │ 4. Load user from DB               │  │
+│  │ 5. Attach to req.user              │  │
+│  └────────┬───────────────────────────┘  │
+│           ↓                               │
+│  ┌────────────────────────────────────┐  │
+│  │ Controller (e.g., getProjects)     │  │
+│  │ Can access req.user.id             │  │
+│  └────────────────────────────────────┘  │
+└──────────────────────────────────────────┘
+```
+
+#### Token Refresh Mechanism
+
+When an access token expires (every 15 minutes), the frontend automatically requests a new one:
+
+```
 ┌─────────────┐
-│   CLIENT    │
-│ localStorage│
-│ - accessToken   (15 min)
-│ - refreshToken  (7 days)
+│   CLIENT    │  Making API request
 └──────┬──────┘
-       │ 3. Subsequent requests
-       │    Authorization: Bearer <accessToken>
+       │ GET /api/projects
+       │ Authorization: Bearer {expired_token}
        ↓
 ┌─────────────────┐
 │    SERVER       │
-│  Middleware     │
-│  authenticateUser()
-│  - Verify token │
-│  - Attach user  │
+│  Middleware     │  Detects expired token
+│  Returns 401    │
+└────────┬────────┘
+         │ 401 Unauthorized
+         ↓
+┌─────────────────────────────────────────┐
+│   CLIENT - Axios Response Interceptor   │
+│  if (error.status === 401 && !retried)  │
+│    1. Get refreshToken from localStorage│
+│    2. POST /api/auth/refresh            │
+│       { refreshToken }                  │
+└──────┬──────────────────────────────────┘
+       │
+       ↓
+┌─────────────────────────────────────────┐
+│    SERVER - Refresh Endpoint            │
+│  1. Validate refresh token              │
+│  2. Check expiration (7 days)           │
+│  3. Generate NEW access token (15 min)  │
+│  4. Generate NEW refresh token (7 days) │
+│  5. Invalidate old refresh token        │
+│  6. Return both tokens                  │
+└──────┬──────────────────────────────────┘
+       │ { accessToken: "new...", refreshToken: "new..." }
+       ↓
+┌─────────────────────────────────────────┐
+│   CLIENT - Update Tokens                │
+│  1. Save new tokens to localStorage     │
+│  2. Retry original failed request       │
+│     with new accessToken                │
+└──────┬──────────────────────────────────┘
+       │ GET /api/projects (retry)
+       │ Authorization: Bearer {new_token}
+       ↓
+┌─────────────────┐
+│    SERVER       │
+│  Request        │  Success - returns data
+│  succeeds       │
 └─────────────────┘
 ```
 
-### Token Structure
+**Why Token Rotation?**
+If someone steals your refresh token and uses it before you do, they get new tokens and yours become invalid. When you try to refresh, it fails, alerting you to the breach. This is called **automatic breach detection**.
 
-**Access Token** (Short-lived: 15 minutes)
-```javascript
+### Token Structure Anatomy
+
+JWT tokens consist of three parts separated by dots: `header.payload.signature`
+
+**Access Token Decoded** (Short-lived: 15 minutes):
+```
+Header (algorithm + type):
 {
-  sub: userId,
-  email: "user@example.com",
-  role: "user",
-  iat: 1733606400,
-  exp: 1733607300  // 15 min
+  "alg": "HS256",     // HMAC SHA-256 algorithm
+  "typ": "JWT"        // Token type
 }
-```
 
-**Refresh Token** (Long-lived: 7 days)
-```javascript
+Payload (claims about the user):
 {
-  sub: userId,
-  type: "refresh",
-  iat: 1733606400,
-  exp: 1734211200  // 7 days
+  "sub": "6932be8dc2b07fc45336d4e2",  // Subject (user ID)
+  "email": "user@example.com",       // User email
+  "role": "user",                     // User role
+  "iat": 1733606400,                  // Issued at timestamp
+  "exp": 1733607300                   // Expires in 15 minutes
 }
+
+Signature (proves token hasn't been tampered):
+HMACSHA256(
+  base64UrlEncode(header) + "." + base64UrlEncode(payload),
+  JWT_SECRET
+)
 ```
 
-### Authentication Middleware
+**Why these fields?**:
+- `sub` (subject): Standard JWT claim for user identifier
+- `iat` (issued at): Track when token was created
+- `exp` (expiration): Automatic expiration enforcement
+- `role`: Quick access control without database lookup
 
-**`authenticateUser` Middleware** (`task1_auth/middleware/auth.js`):
+**Refresh Token** (Long-lived: 7 days):
+Similar structure but stored hashed in database for revocation. Contains `type: "refresh"` to prevent misuse as access token.
 
-```javascript
-// Extracts JWT from Authorization header
-// Verifies token signature
-// Attaches user object to req.user
-// Returns 401 if invalid/expired
+### Authentication Middleware Chain
+
+Every protected route passes through a middleware pipeline that validates requests before reaching controllers:
+
+#### **1. authenticateUser Middleware**
+
+**Purpose**: Verifies the JWT and loads user information
+
+**How it works**:
+```
+Request arrives →
+1. Check Authorization header exists
+   If missing: return 401 "No token provided"
+
+2. Extract token from "Bearer {token}" format
+   Split header by space, take second part
+
+3. Verify JWT signature with JWT_SECRET
+   jwt.verify(token, process.env.JWT_SECRET)
+   If invalid: return 401 "Invalid token"
+   If expired: return 401 "Token expired"
+
+4. Extract user ID from token payload (sub claim)
+
+5. Query database for complete user object
+   const user = await User.findById(tokenPayload.sub)
+   If user deleted: return 401 "User not found"
+
+6. Check if email is verified (for sensitive operations)
+   If not verified: return 403 "Email verification required"
+
+7. Attach user to request object
+   req.user = user
+
+8. Call next() to proceed to next middleware/controller
 ```
 
-**`checkTeamAccess` Middleware** (`task1_auth/middleware/teamAccess.js`):
+**Why query database if JWT is stateless?**: JWT contains basic info (ID, email), but we need current user state (is account locked? is email still verified? did user change role?). The token might be valid but the account could be disabled.
 
-```javascript
-// Validates user has required permissions
-// Checks team membership
-// Validates project ownership
-// Permissions: ['view', 'edit', 'deploy', 'admin']
+#### **2. checkTeamAccess Middleware**
+
+**Purpose**: Enforces team-based permissions for collaborative projects
+
+**How it works**:
+```
+Request for project operation →
+1. Get project ID from request (params or body)
+
+2. Load project from database
+   const project = await Project.findById(projectId)
+
+3. Check if user is project owner
+   if (project.userId.equals(req.user._id)) {
+     // Owner has full access
+     return next()
+   }
+
+4. Check if project belongs to a team
+   if (!project.teamId) {
+     // Personal project, user not owner
+     return 403 "Access denied"
+   }
+
+5. Load user's team membership
+   const membership = await TeamMember.findOne({
+     userId: req.user._id,
+     teamId: project.teamId
+   })
+
+6. Validate membership exists
+   if (!membership) {
+     return 403 "Not a team member"
+   }
+
+7. Check required permission for operation
+   Operation: DELETE → requires 'admin' role
+   Operation: DEPLOY → requires 'deploy' permission
+   Operation: EDIT   → requires 'edit' permission
+   Operation: VIEW   → requires 'view' permission
+
+8. If permission granted: next()
+   If permission denied: 403 "Insufficient permissions"
 ```
 
-### Token Refresh Flow
+**Permission Hierarchy**:
+- **Admin**: Full access (edit, deploy, delete, manage members)
+- **Developer**: Can edit code and deploy
+- **Viewer**: Read-only access, can't modify
 
-```javascript
-// frontend/src/lib/api.js - Response Interceptor
-if (error.response?.status === 401 && !originalRequest._retry) {
-  1. Detect 401 error
-  2. Get refreshToken from localStorage
-  3. POST /api/auth/refresh
-  4. Receive new accessToken
-  5. Update localStorage
-  6. Retry original request
-  
-  if refresh fails:
-    - Clear all tokens
-    - Redirect to /login
-}
+**Example**: Team member with "viewer" role tries to delete project:
 ```
-
-### Registration Flow
-
-```
-1. User submits signup form
-2. Server validates input
-3. Check if email/username exists
-4. Hash password (bcrypt, 12 rounds)
-5. Generate email verification token
-6. Save user to database
-7. Send verification email
-8. Return success (email verification required)
-
-Verification:
-1. User clicks link in email
-2. GET /api/auth/verify-email/:token
-3. Server validates token & expiry
-4. Set isEmailVerified = true
-5. Redirect to login
-```
-
-### Password Reset Flow
-
-```
-Request Reset:
-1. POST /api/auth/forgot-password { email }
-2. Generate reset token (valid 1 hour)
-3. Send email with reset link
-4. Token stored in passwordResetToken
-
-Reset Password:
-1. GET /verify link (validate token)
-2. POST /api/auth/reset-password/:token { newPassword }
-3. Hash new password
-4. Clear reset token
-5. Invalidate all sessions
-6. Force re-login
+Request: DELETE /api/projects/123
+→ authenticateUser: ✓ Valid token
+→ checkTeamAccess: 
+    - User is team member ✓
+    - Operation requires 'admin' permission
+    - User role is 'viewer' ✗
+    - Return 403 "Insufficient permissions"
 ```
 
 ---
 
 ## 📦 Project Management
 
+### What is a Project?
+
+A **project** in our system represents a deployable application - whether it's a React website, Vue app, static site, or Node.js API. Each project has its own:
+- Unique subdomain for accessing the deployed application
+- File storage for source code
+- Build configuration based on framework type
+- Deployment history tracking every version
+- Environment variables for configuration
+- Team collaboration features (if owned by a team)
+
+Think of a project as a container that holds everything needed to build and deploy your application to a live URL.
+
 ### Project Lifecycle
+
+Every project goes through five stages from creation to production:
 
 ```
 CREATE → UPLOAD → BUILD → DEPLOY → MONITOR
+  ↓        ↓        ↓        ↓         ↓
+Setup   Add Code  Compile  Go Live  Track
 ```
+
+**CREATE**: Set up project with name, framework, visibility
+**UPLOAD**: Add source code files (single, multiple, or ZIP)
+**BUILD**: Install dependencies, compile code, generate assets
+**DEPLOY**: Copy built files to Nginx, configure subdomain
+**MONITOR**: Track deployment status, view logs, check analytics
 
 ### 1. Project Creation
 
